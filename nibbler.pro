@@ -195,7 +195,7 @@ FUNCTION differential, t, y
 END
 
 PRO nibbler, Nparticles=Nparticles, shot=shot, electron=electron, temp=temp, psin=psin, $
-  kpar=kpar, output=output
+  kpar=kpar, output=output, equil=equil
   COMMON particle_com, N, mu, mass, charge
   COMMON equil_com, dctpsi, dctfpol, r1d, z1d
 
@@ -206,35 +206,93 @@ PRO nibbler, Nparticles=Nparticles, shot=shot, electron=electron, temp=temp, psi
   
   N = Nparticles
   
-  IF KEYWORD_SET(shot) THEN BEGIN
-     ;; Fetch MAST equilibrium from IDAM
+  IF KEYWORD_SET(equil) THEN BEGIN
+     ; Load a previously calculated equilibrium
      
-     PRINT, "Sorry, code not written yet."
-     RETURN
+     RESTORE, equil
   ENDIF ELSE BEGIN
-     ;; Read in neqdsk file to get Psi
-     file = "g014220.00200"
+     IF KEYWORD_SET(shot) THEN BEGIN
+        ;; Fetch MAST equilibrium from IDAM
+        
+        PRINT, "Sorry, code not written yet."
+        RETURN
+     ENDIF ELSE BEGIN
+        ;; Read in neqdsk file to get Psi
+        file = "g014220.00200"
+        
+        PRINT, "Reading G-EQDSK file"
+        grid = read_neqdsk(file)
+        
+        nr = grid.nx            ; Number of points in R
+        nz = grid.ny            ; Number of points in Z
+        psi = grid.psi          ; Poloidal flux on [nr, nz] mesh
+        
+        fpol1d = grid.fpol      ; f on uniform psi grid
+        
+        r2d = grid.r
+        z2d = grid.z
+        
+        r1d = REFORM(r2d[*,0])
+        z1d = REFORM(z2d[0,*])
+     ENDELSE
      
-     PRINT, "Reading G-EQDSK file"
-     grid = read_neqdsk(file)
+     ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+     ;; By this point, need
+     ;; nr, nz
+     ;; psi[nr,nz], fpol1d[psi], r1d[nr], z1d[nz]
+
+     ;; Analyse the equilibrium
+     aeq = analyse_equil( psi, r1d, z1d )
      
-     nr = grid.nx               ; Number of points in R
-     nz = grid.ny               ; Number of points in Z
-     psi = grid.psi             ; Poloidal flux on [nr, nz] mesh
+     ;; Categorise points inside and outside core
+     core = categorise(psi, aeq=aeq, psinorm=psinorm) ; 1 where in core, 0 otherwise
      
-     fpol1d = grid.fpol         ; f on uniform psi grid
+     ;; Interpolate f onto grid points
+     npgrid = (FINDGEN(N_ELEMENTS(fpol1d))/(N_ELEMENTS(fpol1d)-1))
+     fpol2d = DBLARR(nr, nz)
+     FOR i=0, nr-1 DO BEGIN
+        fpol2d[i,*] = INTERPOL(fpol1d, npgrid, psinorm[i,*], /spline)
+     ENDFOR
+
+     PRINT, "Calculating DCT of Psi..."
+     DCT2Dslow, psi, dctpsi
      
-     r2d = grid.r
-     z2d = grid.z
+     PRINT, "Calculating DCT of fpol..."
+     DCT2Dslow, fpol2d, dctfpol
      
-     r1d = REFORM(r2d[*,0])
-     z1d = REFORM(z2d[0,*])
+     ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+     ;; Generate RMP coil field
+     
+     ;;;; Define coil sets for MAST
+     lower = {r1:1.311, z1:-0.791, r2:1.426, z2:-0.591, n:6, dphi:2.*!PI/12.}
+     upper = {r1:1.311, z1:0.791, r2:1.426, z2:0.591, n:6, dphi:2.*!PI/12.}
+     
+     nphi = 64
+     dz = 2.*!PI / FLOAT(phi)
+     
+     rpos   = FLTARR(nr, nz. nphi)
+     zpos   = rpos
+     phipos = rpos
+     FOR i=0, nphi-1 DO BEGIN
+        rpos[*,*,i]   = r2d
+        zpos[*,*,i]   = z2d
+        phipos[*,*,i] = FLOAT(i)*dz
+     ENDFOR
+     
+     ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+     ;; Save file
+     
+     PRINT, "Saving equilibrium data to 'equil.idl'"
+     
+     SAVE, psi, psinorm, fpol1d, fpol, $
+           r1d, z1d, r2d, z2d, $
+           dctpsi, dctfpol, $
+           aeq, $
+           file="equil.idl"
   ENDELSE
   
-  ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-  ;; By this point, need
-  ;; nr, nz
-  ;; psi[nr,nz], fpol1d[psi], r1d[nr], z1d[nz]
+  ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+  ;; Plotting
   
   ;; Plot contour
   nlev = 100
@@ -243,29 +301,10 @@ PRO nibbler, Nparticles=Nparticles, shot=shot, electron=electron, temp=temp, psi
   levels = findgen(nlev)*(maxf-minf)/FLOAT(nlev-1) + minf
   safe_colors, /first
   CONTOUR, psi, r2d, z2d, levels=levels, color=1, /iso, xstyl=1, ysty=1, $
-    yr=[-0.7,0.7], xr=[0.6,1.2]
-
-  ;; Analyse the equilibrium
-  aeq = analyse_equil( psi, r1d, z1d )
+           yr=[-0.7,0.7], xr=[0.6,1.2]
   
   ;; Overplot the separatrices, O-points
-  oplot_critical, psi, r1d, z1d, aeq
-  
-  ;; Categorise points inside and outside core
-  core = categorise(psi, aeq=aeq, psinorm=psinorm) ; 1 where in core, 0 otherwise
-  
-  ;; Interpolate f onto grid points
-  npgrid = (FINDGEN(N_ELEMENTS(fpol1d))/(N_ELEMENTS(fpol1d)-1))
-  fpol2d = DBLARR(nr, nz)
-  FOR i=0, nr-1 DO BEGIN
-    fpol2d[i,*] = INTERPOL(fpol1d, npgrid, psinorm[i,*], /spline)
-  ENDFOR
-
-  PRINT, "Calculating DCT of Psi..."
-  DCT2Dslow, psi, dctpsi
-  
-  PRINT, "Calculating DCT of fpol..."
-  DCT2Dslow, fpol2d, dctfpol
+  oplot_critical, psi, r2d, z2d, aeq
   
   ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
   ;; Get starting point
