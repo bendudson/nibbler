@@ -31,7 +31,7 @@ END
 
 ;; Calculate time derivatives
 PRO deriv, t, y
-  COMMON particle_com, N, ke, mu, mass, charge
+  COMMON particle_com, N, mu, mass, charge
   COMMON equil_com, dctpsi, dctfpol, r1d, z1d 
   
   ;; Extract position and velocity from y
@@ -78,15 +78,14 @@ PRO deriv, t, y
      ;; g contains [ psi, dpsidr, dpsidz, d2psidr2, d2pdidz2,
      ;; d2psidrdz ]
      
-     ;; NOTE: CHECK THESE SIGNS - A MINUS SOMEWHERE
-     Br[i] = g[2] / dzdi
-     Bz[i] = g[1] / drdi
+     Br[i] = -g[2] / dzdi / r   ; Br = -(dpsi/dz) / R
+     Bz[i] = g[1] / drdi / r    ; Bz = (dpsi/dR) / R
      
-     dBrdr[i] = g[5] / (drdi * dzdi)
-     dBrdz[i] = g[4] / (dzdi^2)
+     dBrdr[i] = -( (g[5]/(drdi * dzdi)) + Br ) / r
+     dBrdz[i] = - g[4] / (dzdi^2) / r
      
-     dBzdr[i] = g[3] / (drdi^2)
-     dBzdz[i] = g[5] / (drdi * dzdi)
+     dBzdr[i] = ( (g[3]/(drdi^2)) - Bz ) / r
+     dBzdz[i] = g[5] / (drdi * dzdi) / r
   ENDFOR
   
   ;; Add the perturbed B from coils
@@ -134,11 +133,13 @@ PRO deriv, t, y
   return [v.r / drdi, v.z / dzdi, v.phi, dvpardt]
 END
 
-PRO nibbler, shot=shot
-  COMMON particle_com, N, ke, mu
-  COMMON equil_com, dctpsi, dctfpol, r, z
+PRO nibbler, N=N, shot=shot, electron=electron, temp=temp, psin=psin
+  COMMON particle_com, N, mu, mass, charge
+  COMMON equil_com, dctpsi, dctfpol, r1d, z1d
 
-  N = 1
+  IF NOT KEYWORD_SET(N) THEN N = 1         ; Number of particles
+  IF NOT KEYWORD_SET(temp) THEN temp = 200 ; Temperature in eV
+  IF NOT KEYWORD_SET(psin) THEN psin = 0.9 ; Starting psi location
   
   IF KEYWORD_SET(shot) THEN BEGIN
      ;; Fetch MAST equilibrium from IDAM
@@ -156,19 +157,40 @@ PRO nibbler, shot=shot
      nz = grid.ny               ; Number of points in Z
      psi = grid.psi             ; Poloidal flux on [nr, nz] mesh
      
-     ;; Categorise points inside and outside core
-     core = categorise(psi, psinorm=psinorm)     ; 1 where in core, 0 otherwise
+     fpol1d = grid.fpol         ; f on uniform psi grid
      
-     ;; Now interpolate f onto grid points
-     npgrid = (FINDGEN(N_ELEMENTS(g.fpol))/(N_ELEMENTS(g.fpol)-1))
-     fpol = INTERPOL(grid.fpol, npgrid, psinorm, /spline)
+     r2d = grid.r
+     z2d = grid.z
      
+     r1d = REFORM(r2d[*,0])
+     z1d = REFORM(z2d[0,*])
   ENDELSE
   
   ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
   ;; By this point, need
   ;; nr, nz
-  ;; psi[nr,nz], fpol[nr, nz]
+  ;; psi[nr,nz], fpol[psi], r1d[nr], z1d[nz]
+  
+  ;; Plot contour
+  nlev = 100
+  minf = MIN(psi)
+  maxf = MAX(psi)
+  levels = findgen(nlev)*(maxf-minf)/FLOAT(nlev-1) + minf
+  safe_colors, /first
+  CONTOUR, psi, r2d, z2d, levels=levels, color=1, /iso, xstyl=1, ysty=1
+
+  ;; Analyse the equilibrium
+  aeq = analyse_equil( psi, r1d, z1d )
+  
+  ;; Overplot the separatrices, O-points
+  oplot_critical, psi, r2d, z2d, aeq
+
+  ;; Categorise points inside and outside core
+  core = categorise(psi, aeq=aeq, psinorm=psinorm) ; 1 where in core, 0 otherwise
+  
+  ;; Interpolate f onto grid points
+  npgrid = (FINDGEN(N_ELEMENTS(g.fpol))/(N_ELEMENTS(g.fpol)-1))
+  fpol = INTERPOL(grid.fpol, npgrid, psinorm, /spline)
   
   PRINT, "Calculating DCT of Psi..."
   DCT2Dslow, psi, dctpsi
@@ -176,10 +198,49 @@ PRO nibbler, shot=shot
   PRINT, "Calculating DCT of fpol..."
   DCT2Dslow, psi, dctfpol
   
+  ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+  ;; Get starting point
+  contour_lines, psinorm, findgen(nr), findgen(nz), levels=[psin], $
+                 path_info=info, path_xy=xy
+  ;; Get the primary O-point
+  opt_ri = a.opt_ri[a.primary_opt]
+  opt_zi = a.opt_zi[a.primary_opt]
+  IF N_ELEMENTS(info) GT 1 THEN BEGIN
+     ;; Find the surface closest to the o-point
+      
+     ind = closest_line(info, xy, opt_ri, opt_zi)
+     info = info[ind]
+  ENDIF ELSE info = info[0]
+  STOP
+  
+  ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
   ;; Generate initial spread of kinetic energies and magnetic moment
+  
+  ; Everything in SI units?
   
   ke = FLTARR(N)
   mu = FLTARR(N)
   
+  IF KEYWORD_SET(electron) THEN BEGIN
+     mass = 9.11e-31
+     charge = -1.602e-19
+  ENDIF ELSE BEGIN
+     ; Deuterium ion
+     mass = 2.*1.67e-27
+     charge = 1.602e-19
+  ENDELSE
+  
+  ;; Choose distribution of energy
+  
+  ke = ke + 1.5*1.602e-19*temp  ; Energy in J
+  
+  ;; Choose distribution of parallel velocity
+  kepar = 0.5*1.602e-19*temp ; Kinetic energy in parallel direction
+  vpar = FLTARR(N) + ()
+  
+  ;; Get perpendicular K.E.
+  keperp = ke - kepar
+  
+  ;; Magnetic moment is mu = keperp / B
   
 END

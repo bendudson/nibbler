@@ -3,7 +3,7 @@
 ; 1 = inside core
 ; 0 = outside core
 
-FUNCTION categorise, psi, psinorm=psinorm
+FUNCTION categorise, psi, psinorm=psinorm, aeq=aeq
   s = SIZE(psi, /dim)
   IF N_ELEMENTS(s) NE 2 THEN BEGIN
      PRINT, "ERROR: psi passed to categorise needs to be 2D"
@@ -12,11 +12,12 @@ FUNCTION categorise, psi, psinorm=psinorm
   nx = s[0]
   ny = s[1]
   
-  ;; Analyse the equilibrium
-  
-  r = (FINDGEN(nx)+1)/FLOAT(nx) ; create dummy r and z coordinates
-  z = (FINDGEN(ny) / FLOAT(ny)) - 0.5
-  a = analyse_equil( psi, r, z )
+  IF NOT KEYWORD_SET(aeq) THEN BEGIN
+     ;; Analyse the equilibrium
+     r = (FINDGEN(nx)+1)/FLOAT(nx) ; create dummy r and z coordinates
+     z = (FINDGEN(ny) / FLOAT(ny)) - 0.5
+     aeq = analyse_equil( psi, r, z )
+  ENDIF
   
   ;; Get the primary O-point
   opt_ri = a.opt_ri[a.primary_opt]
@@ -33,7 +34,7 @@ FUNCTION categorise, psi, psinorm=psinorm
   IF N_ELEMENTS(info) GT 1 THEN BEGIN
      ;; Find the surface closest to the o-point
       
-     ind = closest_line(info, xy, opt_ri[primary_opt], opt_zi[primary_opt])
+     ind = closest_line(info, xy, opt_ri, opt_zi)
      info = info[ind]
   ENDIF ELSE info = info[0]
   STOP
