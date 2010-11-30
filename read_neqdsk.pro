@@ -18,6 +18,7 @@ FUNCTION read_neqdsk, file
     RETURN, 0
   ENDIF
   
+  PRINT, "OPENING "+file
   OPENR, fid, file, /GET_LUN, error=errid
   IF errid THEN BEGIN
     PRINT, "Error whilst reading '"+file+"' :" + !ERROR_STATE.MSG
@@ -41,9 +42,10 @@ FUNCTION read_neqdsk, file
   READS, s[ns-1], nyefit
   
   PRINT, "   nxefit = ", nxefit, " nyefit = ", nyefit
-
+  
   ; Set up the generator
   status = next_double(fid=fid)
+  PRINT, status
 
   xdim   = next_double()
   zdim   = next_double()

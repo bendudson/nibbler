@@ -20,11 +20,11 @@ FUNCTION categorise, psi, psinorm=psinorm, aeq=aeq
   ENDIF
   
   ;; Get the primary O-point
-  opt_ri = a.opt_ri[a.primary_opt]
-  opt_zi = a.opt_zi[a.primary_opt]
-  opt_psi = a.opt_f[a.primary_opt]
+  opt_ri = aeq.opt_ri[aeq.primary_opt]
+  opt_zi = aeq.opt_zi[aeq.primary_opt]
+  opt_psi = aeq.opt_f[aeq.primary_opt]
   ;; Get innermost x-point
-  xpt_psi = a.xpt_f[a.inner_sep]
+  xpt_psi = aeq.xpt_f[aeq.inner_sep]
   
   ;; Get a contour 
   level = 0.98*xpt_psi + 0.02*opt_psi
@@ -37,14 +37,17 @@ FUNCTION categorise, psi, psinorm=psinorm, aeq=aeq
      ind = closest_line(info, xy, opt_ri, opt_zi)
      info = info[ind]
   ENDIF ELSE info = info[0]
-  STOP
+  rinds = xy[0,info.offset:(info.offset+info.n-1)]
+  zinds = xy[1,info.offset:(info.offset+info.n-1)]
+  
   ; Now categorise all points 
   
   core = FLTARR(nx, ny)
   FOR i=0, nx-1 DO BEGIN
      FOR j=0, ny-1 DO BEGIN
         ;; Get crossing points for line to O-point and separatrix
-        data = line_crossings([i,opt_ri], [j,opt_zi], 0, ncross=ncross)
+        data = line_crossings([i,opt_ri], [j,opt_zi], 0, $
+                              rinds, zinds, 1, ncross=ncross)
         IF ncross MOD 2 EQ 0 THEN core[i,j] = 1 ; inside
      ENDFOR
   ENDFOR

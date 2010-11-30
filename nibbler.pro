@@ -11,26 +11,90 @@
 ;
 
 ; Cross-product of two vectors
-FUNCTION cross(a, b)
-  RETURN {r:(a.phi*b.z - b.phi*a.z), $
-          z:(a.r*b.phi - b.r*a.phi), $
-          phi:(a.z*b.r - b.z*a.r)}
+FUNCTION cross, a, b
+  RETURN, {r:(a.phi*b.z - b.phi*a.z), $
+           z:(a.r*b.phi - b.r*a.phi), $
+           phi:(a.z*b.r - b.z*a.r)}
 END
 
-FUNCTION dot(a, b)
+FUNCTION dot, a, b
   RETURN, a.r*b.r + a.z*b.z + a.phi*b.phi
 END
 
-FUNCTION mul(vec, num)
-  RETURN {r:(vec.r*num), z:(vec.z*num), phi:(vec.phi*num)}
+FUNCTION mul, vec, num
+  RETURN, {r:(vec.r*num), z:(vec.z*num), phi:(vec.phi*num)}
 END
 
-FUNCTION add(a, b)
-  RETURN {r:(a.r+b.r), z:(a.z+b.z), phi:(a.phi+b.phi)}
+FUNCTION add, a, b
+  RETURN, {r:(a.r+b.r), z:(a.z+b.z), phi:(a.phi+b.phi)}
+END
+
+;Calculate equilibrium B field
+FUNCTION getEqBfield, ri, zi
+  COMMON equil_com, dctpsi, dctfpol, r1d, z1d 
+  
+  r = INTERPOLATE(r1d, ri)
+  drdi = INTERPOLATE(DERIV(r1d), ri)
+  dzdi = INTERPOLATE(DERIV(z1d), zi)
+
+  g = local_gradient(dctfpol, ri, zi)
+  Bphi = g.f / r
+  dBphidr = (g.dfdr/drdi)/r - Bphi/r
+  dBphidz = (g.dfdz/dzdi)/r
+  
+  ;; For poloidal field derivatives, need second
+  ;; derivatives of psi
+     
+  g = EvalCosP(dctpsi, x0=ri, y0=zi)
+  ;; g contains [ psi, dpsidr, dpsidz, d2psidr2, d2pdidz2,
+  ;; d2psidrdz ]
+     
+  Br = -g[2] / dzdi / r   ; Br = -(dpsi/dz) / R
+  Bz = g[1] / drdi / r    ; Bz = (dpsi/dR) / R
+  
+  dBrdr = -( (g[5]/(drdi * dzdi)) + Br ) / r
+  dBrdz = - g[4] / (dzdi^2) / r
+     
+  dBzdr = ( (g[3]/(drdi^2)) - Bz ) / r
+  dBzdz = g[5] / (drdi * dzdi) / r
+  
+  RETURN, {Br:Br, Bz:Bz, Bphi:Bphi, $
+           dBrdr:dBrdr, dBrdz:dBrdz, $
+           dBzdr:dBzdr, dBzdz:dBzdz, $
+           dBphidr:dBphidr, dBphidz:dBphidz}
+END
+
+PRO oplot_bvec, ri, zi
+  COMMON equil_com, dctpsi, dctfpol, r1d, z1d 
+  
+  r = INTERPOLATE(r1d, ri)
+  drdi = INTERPOLATE(DERIV(r1d), ri)
+  dzdi = INTERPOLATE(DERIV(z1d), zi)
+  
+  g = getEqBfield(ri, zi)
+  
+  Br = g.Br
+  Bz = g.Bz
+  
+  B = SQRT(Br^2 + Bz^2)
+  
+  dr = Br / B
+  dz = Bz / B
+  
+  r0 = INTERPOLATE(r1d, ri)
+  z0 = INTERPOLATE(z1d, zi)
+  
+  OPLOT, [r0, r0+dr], [z0, z0+dz], thick=2, color=2
+  
+END
+
+FUNCTION sign, x
+  IF x GT 0. THEN RETURN, 1.
+  RETURN, -1.
 END
 
 ;; Calculate time derivatives
-PRO deriv, t, y
+FUNCTION differential, t, y
   COMMON particle_com, N, mu, mass, charge
   COMMON equil_com, dctpsi, dctfpol, r1d, z1d 
   
@@ -62,30 +126,24 @@ PRO deriv, t, y
   dBphidphi = B
   
   r = INTERPOLATE(r1d, ri)
-  drdi = INTERPOLATE(DERIV(REFORM(r1d), ri)
-  dzdi = INTERPOLATE(DERIV(REFORM(z1d), ri)
+  drdi = INTERPOLATE(DERIV(r1d), ri)
+  dzdi = INTERPOLATE(DERIV(z1d), zi)
   
   FOR i=0, N-1 DO BEGIN
-     g = local_gradient(dctfpol, ri[i], zi[i])
-     Bphi[i] = g.f / r[i]
-     dBphidr[i] = (g.dfdr/drdi[i])/r[i] - Bphi[i]/r[i]
-     dBphidz[i] = (g.dfdz/dzdi[i])/r[i]
+     eqB = getEqBfield(ri[i], zi[i])
      
-     ;; For poloidal field derivatives, need second
-     ;; derivatives of psi
+     Br[i] = eqB.Br
+     Bz[i] = eqB.Bz
+     Bphi[i] = eqB.Bphi
      
-     g = EvalCosP(dctpsi, x0=ri[i], y0=zi[i])
-     ;; g contains [ psi, dpsidr, dpsidz, d2psidr2, d2pdidz2,
-     ;; d2psidrdz ]
+     dBrdr[i] = eqB.dBrdr
+     dBrdz[i] = eqB.dBrdz
      
-     Br[i] = -g[2] / dzdi / r   ; Br = -(dpsi/dz) / R
-     Bz[i] = g[1] / drdi / r    ; Bz = (dpsi/dR) / R
+     dBzdr[i] = eqB.dBzdr
+     dBzdz[i] = eqB.dBzdz
      
-     dBrdr[i] = -( (g[5]/(drdi * dzdi)) + Br ) / r
-     dBrdz[i] = - g[4] / (dzdi^2) / r
-     
-     dBzdr[i] = ( (g[3]/(drdi^2)) - Bz ) / r
-     dBzdz[i] = g[5] / (drdi * dzdi) / r
+     dBphidr[i] = eqB.dBphidr
+     dBphidz[i] = eqB.dBphidz
   ENDFOR
   
   ;; Add the perturbed B from coils
@@ -102,27 +160,28 @@ PRO deriv, t, y
   ;; Gradients of little b vector (for curvature drift)
 
   ;lbrdr   = (dBrdr - dBdr*Br/B)/B
-  lbrdz   = (dBrdz - dBdz*Br/B)/B
-  lbrdphi = (dBrdphi - dBdphi*Br/B)/B
+  lbrdz   = (dBrdz - gradB.z*Br/B)/B
+  lbrdphi = (dBrdphi - gradB.phi*Br/B)/B
   
-  lbzdr   = (dBzdr - dBdr*Bz/B)/B
+  lbzdr   = (dBzdr - gradB.r*Bz/B)/B
   ;lbzdz   = (dBzdz - dBdz*Bz/B)/B
-  lbzdphi = (dBzdphi - dBdphi*Bz/B)/B
+  lbzdphi = (dBzdphi - gradB.phi*Bz/B)/B
   
-  lbphidr   = (dBphidr - dBdr*Bphi/B)/B
-  lbphidz   = (dBphidz - dBdz*Bphi/B)/B
+  lbphidr   = (dBphidr - gradB.r*Bphi/B)/B
+  lbphidz   = (dBphidz - gradB.z*Bphi/B)/B
   ;lbphidphi = (dBphidphi - dBdphi*Bphi/B)/B
   
   bvec = {r:(Br/B), z:(Bz/B), phi:(Bphi/B)}
   curlb = {r:(lbzdphi/r - lbphidz), phi:(lbrdz - lbzdr), $
            z:((bvec.phi+r*lbphidr - lbrdphi)/r)}
   
-  kappa = cross_prod( curlb, bvec )  ; (b dot grad) b
+  kappa = cross( curlb, bvec )  ; (b dot grad) b
 
   ;; Calculate perpendicular drift velocity
   invwcj = mass / (charge * B)  ; 1 / wcj
   
-  vd = mul( cross_prod( bvec, add( mul(kappa, vpar^2), mul(gradB, mu) )), invwcj )
+  vd = mul( cross( bvec, add( mul(kappa, vpar^2), mul(gradB, mu) )), invwcj )
+  ;vd = {r:0.0, z:0.0, phi:0.0}
   
   ;; Add parallel velocity
   v = add( vd, mul(bvec, vpar) )
@@ -130,16 +189,22 @@ PRO deriv, t, y
   ; Calculate parallel acceleration (mirror force)
   dvpardt = -mu * dot( bvec, gradB ) / mass
   
-  return [v.r / drdi, v.z / dzdi, v.phi, dvpardt]
+  ;cursor, a, b, /down
+
+  return, [v.r / drdi, v.z / dzdi, v.phi / r, dvpardt]
 END
 
-PRO nibbler, N=N, shot=shot, electron=electron, temp=temp, psin=psin
+PRO nibbler, Nparticles=Nparticles, shot=shot, electron=electron, temp=temp, psin=psin, $
+  kpar=kpar
   COMMON particle_com, N, mu, mass, charge
   COMMON equil_com, dctpsi, dctfpol, r1d, z1d
 
-  IF NOT KEYWORD_SET(N) THEN N = 1         ; Number of particles
+  IF NOT KEYWORD_SET(Nparticles) THEN Nparticles = 1 ; Number of particles
   IF NOT KEYWORD_SET(temp) THEN temp = 200 ; Temperature in eV
   IF NOT KEYWORD_SET(psin) THEN psin = 0.9 ; Starting psi location
+  IF NOT KEYWORD_SET(kpar) THEN kpar = 0.3 ; Vpar^2 / V^2
+  
+  N = Nparticles
   
   IF KEYWORD_SET(shot) THEN BEGIN
      ;; Fetch MAST equilibrium from IDAM
@@ -148,7 +213,7 @@ PRO nibbler, N=N, shot=shot, electron=electron, temp=temp, psin=psin
      RETURN
   ENDIF ELSE BEGIN
      ;; Read in neqdsk file to get Psi
-     file = ""
+     file = "g014220.00200"
      
      PRINT, "Reading G-EQDSK file"
      grid = read_neqdsk(file)
@@ -169,7 +234,7 @@ PRO nibbler, N=N, shot=shot, electron=electron, temp=temp, psin=psin
   ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
   ;; By this point, need
   ;; nr, nz
-  ;; psi[nr,nz], fpol[psi], r1d[nr], z1d[nz]
+  ;; psi[nr,nz], fpol1d[psi], r1d[nr], z1d[nz]
   
   ;; Plot contour
   nlev = 100
@@ -177,42 +242,69 @@ PRO nibbler, N=N, shot=shot, electron=electron, temp=temp, psin=psin
   maxf = MAX(psi)
   levels = findgen(nlev)*(maxf-minf)/FLOAT(nlev-1) + minf
   safe_colors, /first
-  CONTOUR, psi, r2d, z2d, levels=levels, color=1, /iso, xstyl=1, ysty=1
+  CONTOUR, psi, r2d, z2d, levels=levels, color=1, /iso, xstyl=1, ysty=1, $
+    yr=[-0.7,0.7], xr=[0.6,1.2]
 
   ;; Analyse the equilibrium
   aeq = analyse_equil( psi, r1d, z1d )
   
   ;; Overplot the separatrices, O-points
-  oplot_critical, psi, r2d, z2d, aeq
-
+  oplot_critical, psi, r1d, z1d, aeq
+  
   ;; Categorise points inside and outside core
   core = categorise(psi, aeq=aeq, psinorm=psinorm) ; 1 where in core, 0 otherwise
   
   ;; Interpolate f onto grid points
-  npgrid = (FINDGEN(N_ELEMENTS(g.fpol))/(N_ELEMENTS(g.fpol)-1))
-  fpol = INTERPOL(grid.fpol, npgrid, psinorm, /spline)
-  
+  npgrid = (FINDGEN(N_ELEMENTS(fpol1d))/(N_ELEMENTS(fpol1d)-1))
+  fpol2d = DBLARR(nr, nz)
+  FOR i=0, nr-1 DO BEGIN
+    fpol2d[i,*] = INTERPOL(fpol1d, npgrid, psinorm[i,*], /spline)
+  ENDFOR
+
   PRINT, "Calculating DCT of Psi..."
   DCT2Dslow, psi, dctpsi
   
   PRINT, "Calculating DCT of fpol..."
-  DCT2Dslow, psi, dctfpol
+  DCT2Dslow, fpol2d, dctfpol
   
   ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
   ;; Get starting point
   contour_lines, psinorm, findgen(nr), findgen(nz), levels=[psin], $
                  path_info=info, path_xy=xy
   ;; Get the primary O-point
-  opt_ri = a.opt_ri[a.primary_opt]
-  opt_zi = a.opt_zi[a.primary_opt]
+  opt_ri = aeq.opt_ri[aeq.primary_opt]
+  opt_zi = aeq.opt_zi[aeq.primary_opt]
   IF N_ELEMENTS(info) GT 1 THEN BEGIN
      ;; Find the surface closest to the o-point
       
      ind = closest_line(info, xy, opt_ri, opt_zi)
      info = info[ind]
   ENDIF ELSE info = info[0]
-  STOP
+  rinds = xy[0,info.offset:(info.offset+info.n-1)]
+  zinds = xy[1,info.offset:(info.offset+info.n-1)]
   
+  OPLOT, INTERPOLATE(r1d, rinds), INTERPOLATE(z1d, zinds), color=4, thick=2
+  
+  ; Get starting position at outboard midplane
+  ri0 = MAX(rinds, pos)
+  zi0 = zinds[pos]
+  
+  ; Get B here. Should be minimum B
+  eqB = getEqBfield(ri0, zi0)
+  Bmin = SQRT(eqB.Br^2 + eqB.Bz^2 + eqB.Bphi^2)
+  
+
+  ; Get maximum B (to work out trapped/passing boundary)
+  ri1 = MIN(rinds, pos)
+  zi1 = zinds[pos]
+  eqB = getEqBfield(ri1, zi1)
+  Bmax = SQRT(eqB.Br^2 + eqB.Bz^2 + eqB.Bphi^2)
+  
+  trapbndry = 1 - Bmin / Bmax
+  
+  ;; Check if trapped
+  PRINT, "Particle trapped if |kpar| = vpar^2/v^2 < ", trapbndry
+
   ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
   ;; Generate initial spread of kinetic energies and magnetic moment
   
@@ -235,12 +327,38 @@ PRO nibbler, N=N, shot=shot, electron=electron, temp=temp, psin=psin
   ke = ke + 1.5*1.602e-19*temp  ; Energy in J
   
   ;; Choose distribution of parallel velocity
-  kepar = 0.5*1.602e-19*temp ; Kinetic energy in parallel direction
-  vpar = FLTARR(N) + ()
+  kepar = ABS(kpar)*ke ; Kinetic energy in parallel direction
+  
+  vpar = FLTARR(N) + SIGN(kpar)*SQRT( 2.*kepar / mass )
   
   ;; Get perpendicular K.E.
   keperp = ke - kepar
   
   ;; Magnetic moment is mu = keperp / B
+  mu = keperp / Bmin
   
+  ; Create starting vector
+  
+  y0 = [REPLICATE(ri0, N), REPLICATE(zi0, N), $ ; All start at outboard midplane
+        !DPI*2.*DINDGEN(N)/DOUBLE(N), $         ; Distribute around toroidally
+        vpar]
+
+  ; To get typical timescale, use cyclotron timescale
+  
+  ctime = 2.*!PI * mass / (charge * Bmax)
+
+  ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+  ; Evolve
+  
+  dt = ctime
+  y = y0
+  FOR i=0, 1000 DO BEGIN
+    dydt = differential(0., y)
+    y = RK4(y, dydt, 0., dt, 'differential')
+    
+
+    PLOTS, INTERPOLATE(r1d, y[0:(N-1)]), INTERPOLATE(z1d, y[N:(2*N-1)]), color=3, PSYM=3
+    ;PRINT, y
+  ENDFOR
+  STOP
 END
