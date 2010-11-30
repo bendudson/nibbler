@@ -195,7 +195,7 @@ FUNCTION differential, t, y
 END
 
 PRO nibbler, Nparticles=Nparticles, shot=shot, electron=electron, temp=temp, psin=psin, $
-  kpar=kpar
+  kpar=kpar, output=output
   COMMON particle_com, N, mu, mass, charge
   COMMON equil_com, dctpsi, dctfpol, r1d, z1d
 
@@ -350,15 +350,28 @@ PRO nibbler, Nparticles=Nparticles, shot=shot, electron=electron, temp=temp, psi
   ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
   ; Evolve
   
-  dt = ctime
+  dt = DOUBLE(ctime)
   y = y0
+  time = DOUBLE(0.)
   FOR i=0, 1000 DO BEGIN
     dydt = differential(0., y)
-    y = RK4(y, dydt, 0., dt, 'differential')
-    
+    y = RK4(y, dydt, 0., dt, 'differential', /double)
+    time = time + dt
 
     PLOTS, INTERPOLATE(r1d, y[0:(N-1)]), INTERPOLATE(z1d, y[N:(2*N-1)]), color=3, PSYM=3
     ;PRINT, y
   ENDFOR
+  
+  IF KEYWORD_SET(output) THEN BEGIN
+    ; Dump the results to a file
+    
+    SAVE, psi, fpol2d, r2d, z2d, psinorm, aeq, $ ; Equilibrium data
+      psin, rinds, zinds, $ ; Starting flux surface
+      ri0, zi0, $ ; Starting location
+      ke, mu, mass, charge, $ ; Particle quantities
+      y0, time, y, $  ; Starting and end positions, time elapsed
+      file=output
+  ENDIF
+  
   STOP
 END
