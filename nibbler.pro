@@ -31,7 +31,7 @@ END
 
 ;Calculate equilibrium B field
 FUNCTION getEqBfield, ri, zi
-  COMMON equil_com, dctpsi, dctfpol, r1d, z1d 
+  COMMON equil_com, dctpsi, dctfpol, r1d, z1d, Ar, Az, Aphi, includermp 
   
   r = INTERPOLATE(r1d, ri)
   drdi = INTERPOLATE(DERIV(r1d), ri)
@@ -65,7 +65,7 @@ FUNCTION getEqBfield, ri, zi
 END
 
 PRO oplot_bvec, ri, zi
-  COMMON equil_com, dctpsi, dctfpol, r1d, z1d 
+  COMMON equil_com, dctpsi, dctfpol, r1d, z1d, Ar, Az, Aphi, includermp
   
   r = INTERPOLATE(r1d, ri)
   drdi = INTERPOLATE(DERIV(r1d), ri)
@@ -93,10 +93,46 @@ FUNCTION sign, x
   RETURN, -1.
 END
 
+; Calculate 3D (r,z,phi) derivatives and second-derivatives
+; given var[r,z,phi] and indices
+FUNCTION get3DGradients, var, ri, zi, pi
+  s = SIZE(var, /dims)
+  nr = s[0]
+  nz = s[1]
+  nphi = s[2]
+  
+  ri0 = ROUND(ri)
+  zi0 = ROUND(zi)
+  pi0 = ROUND(pi)
+  
+  ; Coordinates of points in a cube (27 total)
+  r = [ 0,-1, 1, 0,-1, 1, 0,-1, 1, 0,-1, 1, 0,-1, 1, 0,-1, 1, 0,-1, 1, 0,-1, 1, 0,-1, 1]
+  z = [ 0, 0, 0,-1,-1,-1, 1, 1, 1, 0, 0, 0,-1,-1,-1, 1, 1, 1, 0, 0, 0,-1,-1,-1, 1, 1, 1]
+  p = [ 0, 0, 0, 0, 0, 0, 0, 0, 0,-1,-1,-1,-1,-1,-1,-1,-1,-1, 1, 1, 1, 1, 1, 1, 1, 1, 1]
+  
+  n = N_ELEMENTS(r)
+  ; Get the values at each point
+  data = DBLARR(n)
+  FOR i=0, n-1 DO data[i] = var[ri0+r[i], ((zi0+z[i]) > 0) < nz, (pi0+p[i]) MOD nphi]
+  
+  ; Create the matrix to generate points from 
+  
+  
+  RETURN, {ddr:
+END
+
+; Add cartesian vectors
+FUNCTION addCart, a, b
+  ac = toCart(a)
+  bc = toCart(b)
+
+  RETURN, {x:(ac.x+bc.x), y:(ac.y+bc.y), z:(ac.z+bc.z)}
+END
+
 ;; Calculate time derivatives
 FUNCTION differential, t, y
   COMMON particle_com, N, mu, mass, charge
-  COMMON equil_com, dctpsi, dctfpol, r1d, z1d 
+  COMMON equil_com, dctpsi, dctfpol, r1d, z1d, Ar, Az, Aphi, includermp
   
   ;; Extract position and velocity from y
   ;; ri and zi are indices into r and z arrays
@@ -146,9 +182,18 @@ FUNCTION differential, t, y
      dBphidz[i] = eqB.dBphidz
   ENDFOR
   
-  ;; Add the perturbed B from coils
-  
-  
+  IF includermp THEN BEGIN
+    ; Add the perturbed B from coils
+    s = SIZE(Ar, /dims)
+    IF N_ELEMENTS(s) NE 3 THEN STOP
+    nphi = s[2] ; Number of points in phi
+    dphi = !DPI*2. / DOUBLE(nphi)
+    
+    FOR i=0, N-1 DO BEGIN
+      
+    ENDFOR
+  ENDIF
+    
   ;; Get magnitude of B 
   B = SQRT(Br^2 + Bz^2 + Bphi^2)
   
@@ -195,21 +240,25 @@ FUNCTION differential, t, y
 END
 
 PRO nibbler, Nparticles=Nparticles, shot=shot, electron=electron, temp=temp, psin=psin, $
-  kpar=kpar, output=output, equil=equil
+             kpar=kpar, output=output, equil=equil, odd=odd, $
+             current=current, rmp=rmp
   COMMON particle_com, N, mu, mass, charge
-  COMMON equil_com, dctpsi, dctfpol, r1d, z1d
+  COMMON equil_com, dctpsi, dctfpol, r1d, z1d, Ar, Az, Aphi, includermp
 
   IF NOT KEYWORD_SET(Nparticles) THEN Nparticles = 1 ; Number of particles
   IF NOT KEYWORD_SET(temp) THEN temp = 200 ; Temperature in eV
   IF NOT KEYWORD_SET(psin) THEN psin = 0.9 ; Starting psi location
   IF NOT KEYWORD_SET(kpar) THEN kpar = 0.3 ; Vpar^2 / V^2
   
+  includermp = 0
+  IF KEYWORD_SET(rmp) THEN includermp = 1
+  
   N = Nparticles
   
   IF KEYWORD_SET(equil) THEN BEGIN
      ; Load a previously calculated equilibrium
      
-     RESTORE, equil
+     RESTORE, 'equil.idl'
   ENDIF ELSE BEGIN
      IF KEYWORD_SET(shot) THEN BEGIN
         ;; Fetch MAST equilibrium from IDAM
@@ -263,14 +312,16 @@ PRO nibbler, Nparticles=Nparticles, shot=shot, electron=electron, temp=temp, psi
      ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
      ;; Generate RMP coil field
      
+     PRINT, "Generating vector potential from coils..."
+     
      ;;;; Define coil sets for MAST
      lower = {r1:1.311, z1:-0.791, r2:1.426, z2:-0.591, n:6, dphi:2.*!PI/12.}
      upper = {r1:1.311, z1:0.791, r2:1.426, z2:0.591, n:6, dphi:2.*!PI/12.}
      
      nphi = 64
-     dz = 2.*!PI / FLOAT(phi)
+     dz = 2.*!PI / FLOAT(nphi)
      
-     rpos   = FLTARR(nr, nz. nphi)
+     rpos   = FLTARR(nr, nz, nphi)
      zpos   = rpos
      phipos = rpos
      FOR i=0, nphi-1 DO BEGIN
@@ -279,17 +330,38 @@ PRO nibbler, Nparticles=Nparticles, shot=shot, electron=electron, temp=temp, psi
         phipos[*,*,i] = FLOAT(i)*dz
      ENDFOR
      
+     ; Calculate for current of 1A (multiplied up after)
+     I = 1.
+     pos = {r:rpos, z:zpos, phi:phipos}
+     A = AfromCoilSet(lower, I, pos, fast=fast)
+     IF KEYWORD_SET(odd) THEN BEGIN
+       A = addCart(A, AfromCoilSet(upper, I, pos, fast=fast))
+     ENDIF ELSE BEGIN
+       A = addCart(A, AfromCoilSet(upper, -I, pos, fast=fast))
+     ENDELSE
+     
+     ; Convert to polar coordinates
+     Ar   = A.x * COS(phi) + A.y * SIN(phi)
+     Aphi = A.y * COS(phi) - A.x * SIN(phi)
+     Az   = A.z
+     
      ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
      ;; Save file
      
      PRINT, "Saving equilibrium data to 'equil.idl'"
      
-     SAVE, psi, psinorm, fpol1d, fpol, $
-           r1d, z1d, r2d, z2d, $
-           dctpsi, dctfpol, $
-           aeq, $
-           file="equil.idl"
+     SAVE, psi, psinorm, fpol1d, fpol2d, $  ; psi and fpol
+       r1d, z1d, r2d, z2d, $   ; Radius, height in 1 and 2D
+       dctpsi, dctfpol, $      ; DCT of psi and fpol
+       aeq, $                  ; Analysis of equilibrium
+       Ar, Az, Aphi, $         ; RMP field
+       file="equil.idl"
   ENDELSE
+  
+  ; Multiply the RMP coil field
+  Ar   = current * Ar
+  Az   = current * Az
+  Aphi = current * Aphi
   
   ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
   ;; Plotting
@@ -300,11 +372,10 @@ PRO nibbler, Nparticles=Nparticles, shot=shot, electron=electron, temp=temp, psi
   maxf = MAX(psi)
   levels = findgen(nlev)*(maxf-minf)/FLOAT(nlev-1) + minf
   safe_colors, /first
-  CONTOUR, psi, r2d, z2d, levels=levels, color=1, /iso, xstyl=1, ysty=1, $
-           yr=[-0.7,0.7], xr=[0.6,1.2]
+  CONTOUR, psi, r2d, z2d, levels=levels, color=1, /iso, xstyl=1, ysty=1
   
   ;; Overplot the separatrices, O-points
-  oplot_critical, psi, r2d, z2d, aeq
+  oplot_critical, psi, r1d, z1d, aeq
   
   ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
   ;; Get starting point
@@ -392,7 +463,7 @@ PRO nibbler, Nparticles=Nparticles, shot=shot, electron=electron, temp=temp, psi
   dt = DOUBLE(ctime)
   y = y0
   time = DOUBLE(0.)
-  FOR i=0, 1000 DO BEGIN
+  FOR i=0, 2500 DO BEGIN
     dydt = differential(0., y)
     y = RK4(y, dydt, 0., dt, 'differential', /double)
     time = time + dt
