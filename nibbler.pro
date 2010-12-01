@@ -95,7 +95,8 @@ END
 
 ; Calculate 3D (r,z,phi) derivatives and second-derivatives
 ; given var[r,z,phi] and indices
-FUNCTION get3DGradients, var, ri, zi, pi
+FUNCTION get3DGradients, var, ri, zi, pi, dr, dz, dphi
+  COMMON grad3d, calc, r, z, p, W, U, V
   s = SIZE(var, /dims)
   nr = s[0]
   nz = s[1]
@@ -105,20 +106,43 @@ FUNCTION get3DGradients, var, ri, zi, pi
   zi0 = ROUND(zi)
   pi0 = ROUND(pi)
   
-  ; Coordinates of points in a cube (27 total)
-  r = [ 0,-1, 1, 0,-1, 1, 0,-1, 1, 0,-1, 1, 0,-1, 1, 0,-1, 1, 0,-1, 1, 0,-1, 1, 0,-1, 1]
-  z = [ 0, 0, 0,-1,-1,-1, 1, 1, 1, 0, 0, 0,-1,-1,-1, 1, 1, 1, 0, 0, 0,-1,-1,-1, 1, 1, 1]
-  p = [ 0, 0, 0, 0, 0, 0, 0, 0, 0,-1,-1,-1,-1,-1,-1,-1,-1,-1, 1, 1, 1, 1, 1, 1, 1, 1, 1]
+  IF KEYWORD_SET(calc) THEN BEGIN ; Calculate inverse matrix
+     calc = 1
+     
+     ;; Coordinates of points in a cube (27 total)
+     r = [ 0,-1, 1, 0,-1, 1, 0,-1, 1, 0,-1, 1, 0,-1, 1, 0,-1, 1, 0,-1, 1, 0,-1, 1, 0,-1, 1]
+     z = [ 0, 0, 0,-1,-1,-1, 1, 1, 1, 0, 0, 0,-1,-1,-1, 1, 1, 1, 0, 0, 0,-1,-1,-1, 1, 1, 1]
+     p = [ 0, 0, 0, 0, 0, 0, 0, 0, 0,-1,-1,-1,-1,-1,-1,-1,-1,-1, 1, 1, 1, 1, 1, 1, 1, 1, 1]
+  
+     ;; Create the matrix to generate points from differentials
+     A = TRANSPOSE([[fltarr(n)+1.], $ ; constant
+                    [r], $            ; d/dr
+                    [z], $            ; d/dz
+                    [p], $            ; d/dphi
+                    [0.5*r*r], $      ; d2/dr2
+                    [0.5*z*z], $      ; d2/dz2
+                    [0.5*p*p], $      ; d2/dp2
+                    [r*z], $          ; d2/drdz
+                    [r*p], $          ; d2/drdp
+                    [z*p]])           ; d2/dzdp
+  
+     ;; Calculate SVD
+     SVDC, A, W, U, V
+  ENDIF
   
   n = N_ELEMENTS(r)
   ; Get the values at each point
   data = DBLARR(n)
-  FOR i=0, n-1 DO data[i] = var[ri0+r[i], ((zi0+z[i]) > 0) < nz, (pi0+p[i]) MOD nphi]
+  FOR i=0, n-1 DO data[i] = var[((ri0+r[i]) > 0) < nr, $
+                                ((zi0+z[i]) > 0) < nz, $
+                                (pi0+p[i]) MOD nphi]
   
-  ; Create the matrix to generate points from 
+
+  res = SVSOL(U,W,V, data)
   
-  
-  RETURN, {ddr:
+  RETURN, {f:res[0], ddr:res[1]/dr, ddz:res[2]/dz, ddp:res[3]/dphi, $
+           d2dr2:res[4]/(dr*dr), d2dz2:res[5]/(dz*dz), d2dp2:res[6]/(dphi*dphi), $
+           d2drdz:res[7]/(dr*dz), d2drdp:res[8]/(dr*dphi), d2dzdp:res[9]/(dz*dphi)}
 END
 
 ; Add cartesian vectors
@@ -190,7 +214,30 @@ FUNCTION differential, t, y
     dphi = !DPI*2. / DOUBLE(nphi)
     
     FOR i=0, N-1 DO BEGIN
-      
+       ; Calculate gradients at this location (Using SVD)
+       Arg = get3DGradients(Ar,   ri[i], zi[i], phi[i]/dphi, drdi[i], dzdi[i], dphi)
+       Azg = get3DGradients(Az,   ri[i], zi[i], phi[i]/dphi, drdi[i], dzdi[i], dphi)
+       Apg = get3DGradients(Aphi, ri[i], zi[i], phi[i]/dphi, drdi[i], dzdi[i], dphi)
+       
+       ; Take curl of A
+       Br[i] = Br[i] + Azg.ddp/r[i] - Apg.ddz
+       Bz[i] = Bz[i] + ( Apg.f + r[i]*Apg.ddr - Arg.ddp ) / r[i]
+       Bphi[i] = Bphi[i] + Arg.ddz - Azg.ddr
+       
+       ; Gradients of B
+       
+       dBrdr[i] = dBrdr[i] + Azg.d2drdp/r[i] - Azg.ddp/(r[i]*r[i]) - Apg.d2drdz
+       dBrdz[i] = dBrdz[i] + Azg.d2dzdp/r[i] - Apg.d2dz2
+       dBrdphi[i] = (Azg.d2dp2/r[i] - Apg.d2dzdp)/r[i]
+       
+       dBzdr[i] = dBzdr[i] - ( Apg.f + r[i]*Apg.ddr - Arg.ddp ) / (r[i]*r[i]) + $
+                  ( Apg.ddr + Apg.ddr + r[i]*Apg.d2dr2 - Arg.d2drdp ) / r[i]
+       dBzdz[i] = dBzdz[i] + ( Apg.ddz + r[i]*Apg.d2drdz - Arg.d2dzdp ) / r[i]
+       dBzdphi[i] = (Apg.ddp + r[i]*Apg.d2drdp - Arg.d2dp2)/(r[i]*r[i])
+       
+       dBphidr[i] = dBphidr[i] + Arg.d2drdz - Azg.d2dr2
+       dBphidz[i] = dBphidz[i] + Arg.d2dz2 - Azg.d2drdz
+       dBphidphi[i] = (Arg.d2dzdp - Azg.d2drdp)/r[i]
     ENDFOR
   ENDIF
     
