@@ -9,6 +9,10 @@
 ; Evolve position in toroidal coordinates (R,Z,phi)
 ; and parallel velocity of particles.
 ;
+; See README file for useage instructions
+;
+; All quantities are in SI units except temperature in eV
+;
 
 ; Cross-product of two vectors
 FUNCTION cross, a, b
@@ -17,14 +21,17 @@ FUNCTION cross, a, b
            phi:(a.z*b.r - b.z*a.r)}
 END
 
+; Dot-product of two vectors
 FUNCTION dot, a, b
   RETURN, a.r*b.r + a.z*b.z + a.phi*b.phi
 END
 
+; Multiply a vector by a constant
 FUNCTION mul, vec, num
   RETURN, {r:(vec.r*num), z:(vec.z*num), phi:(vec.phi*num)}
 END
 
+; Add two vectors together
 FUNCTION add, a, b
   RETURN, {r:(a.r+b.r), z:(a.z+b.z), phi:(a.phi+b.phi)}
 END
@@ -88,6 +95,7 @@ PRO oplot_bvec, ri, zi
   
 END
 
+; Return the sign of a number (+1 or -1)
 FUNCTION sign, x
   IF x GT 0. THEN RETURN, 1.
   RETURN, -1.
@@ -97,7 +105,7 @@ END
 ; given var[r,z,phi] and indices
 FUNCTION get3DGradients, var, ri, zi, pi, dr, dz, dphi
   COMMON grad3d, calc, r, z, p, W, U, V
-  s = SIZE(var, /dims)
+  s = SIZE(var, /dim)
   nr = s[0]
   nz = s[1]
   nphi = s[2]
@@ -106,14 +114,15 @@ FUNCTION get3DGradients, var, ri, zi, pi, dr, dz, dphi
   zi0 = ROUND(zi)
   pi0 = ROUND(pi)
   
-  IF KEYWORD_SET(calc) THEN BEGIN ; Calculate inverse matrix
+  IF N_ELEMENTS(calc) EQ 0 THEN BEGIN ; Calculate inverse matrix
      calc = 1
      
      ;; Coordinates of points in a cube (27 total)
      r = [ 0,-1, 1, 0,-1, 1, 0,-1, 1, 0,-1, 1, 0,-1, 1, 0,-1, 1, 0,-1, 1, 0,-1, 1, 0,-1, 1]
      z = [ 0, 0, 0,-1,-1,-1, 1, 1, 1, 0, 0, 0,-1,-1,-1, 1, 1, 1, 0, 0, 0,-1,-1,-1, 1, 1, 1]
      p = [ 0, 0, 0, 0, 0, 0, 0, 0, 0,-1,-1,-1,-1,-1,-1,-1,-1,-1, 1, 1, 1, 1, 1, 1, 1, 1, 1]
-  
+     
+     n = N_ELEMENTS(r)
      ;; Create the matrix to generate points from differentials
      A = TRANSPOSE([[fltarr(n)+1.], $ ; constant
                     [r], $            ; d/dr
@@ -135,7 +144,7 @@ FUNCTION get3DGradients, var, ri, zi, pi, dr, dz, dphi
   data = DBLARR(n)
   FOR i=0, n-1 DO data[i] = var[((ri0+r[i]) > 0) < nr, $
                                 ((zi0+z[i]) > 0) < nz, $
-                                (pi0+p[i]) MOD nphi]
+                                (pi0+p[i]+2*nphi) MOD nphi]
   
 
   res = SVSOL(U,W,V, data)
@@ -208,7 +217,7 @@ FUNCTION differential, t, y
   
   IF includermp THEN BEGIN
     ; Add the perturbed B from coils
-    s = SIZE(Ar, /dims)
+    s = SIZE(Ar, /dim)
     IF N_ELEMENTS(s) NE 3 THEN STOP
     nphi = s[2] ; Number of points in phi
     dphi = !DPI*2. / DOUBLE(nphi)
@@ -238,6 +247,7 @@ FUNCTION differential, t, y
        dBphidr[i] = dBphidr[i] + Arg.d2drdz - Azg.d2dr2
        dBphidz[i] = dBphidz[i] + Arg.d2dz2 - Azg.d2drdz
        dBphidphi[i] = (Arg.d2dzdp - Azg.d2drdp)/r[i]
+       
     ENDFOR
   ENDIF
     
@@ -286,9 +296,11 @@ FUNCTION differential, t, y
   return, [v.r / drdi, v.z / dzdi, v.phi / r, dvpardt]
 END
 
-PRO nibbler, Nparticles=Nparticles, shot=shot, electron=electron, temp=temp, psin=psin, $
+PRO nibbler, Nparticles=Nparticles, shot=shot, electron=electron, $
+             temp=temp, psin=psin, $
              kpar=kpar, output=output, equil=equil, odd=odd, $
-             current=current, rmp=rmp
+             current=current, rmp=rmp, $
+             runfor=runfor, dtmul=dtmul
   COMMON particle_com, N, mu, mass, charge
   COMMON equil_com, dctpsi, dctfpol, r1d, z1d, Ar, Az, Aphi, includermp
 
@@ -296,6 +308,9 @@ PRO nibbler, Nparticles=Nparticles, shot=shot, electron=electron, temp=temp, psi
   IF NOT KEYWORD_SET(temp) THEN temp = 200 ; Temperature in eV
   IF NOT KEYWORD_SET(psin) THEN psin = 0.9 ; Starting psi location
   IF NOT KEYWORD_SET(kpar) THEN kpar = 0.3 ; Vpar^2 / V^2
+  IF NOT KEYWORD_SET(current) THEN current = 4e3 ; Coil current in Amps
+  IF NOT KEYWORD_SET(runfor) THEN runfor=1e-3 ; Run time in seconds
+  IF NOT KEYWORD_SET(dtmul) THEN dtmul = 1.  ; Multiply the timestep by this
   
   includermp = 0
   IF KEYWORD_SET(rmp) THEN includermp = 1
@@ -306,6 +321,10 @@ PRO nibbler, Nparticles=Nparticles, shot=shot, electron=electron, temp=temp, psi
      ; Load a previously calculated equilibrium
      
      RESTORE, 'equil.idl'
+     
+     s = SIZE(psi, /dim)
+     nr = s[0]
+     nz = s[1]
   ENDIF ELSE BEGIN
      IF KEYWORD_SET(shot) THEN BEGIN
         ;; Fetch MAST equilibrium from IDAM
@@ -380,16 +399,16 @@ PRO nibbler, Nparticles=Nparticles, shot=shot, electron=electron, temp=temp, psi
      ; Calculate for current of 1A (multiplied up after)
      I = 1.
      pos = {r:rpos, z:zpos, phi:phipos}
-     A = AfromCoilSet(lower, I, pos, fast=fast)
+     A = AfromCoilSet(lower, I, pos, /fast)
      IF KEYWORD_SET(odd) THEN BEGIN
-       A = addCart(A, AfromCoilSet(upper, I, pos, fast=fast))
+       A = addCart(A, AfromCoilSet(upper, I, pos, /fast))
      ENDIF ELSE BEGIN
-       A = addCart(A, AfromCoilSet(upper, -I, pos, fast=fast))
+       A = addCart(A, AfromCoilSet(upper, -I, pos, /fast))
      ENDELSE
      
      ; Convert to polar coordinates
-     Ar   = A.x * COS(phi) + A.y * SIN(phi)
-     Aphi = A.y * COS(phi) - A.x * SIN(phi)
+     Ar   = A.x * COS(phipos) + A.y * SIN(phipos)
+     Aphi = A.y * COS(phipos) - A.x * SIN(phipos)
      Az   = A.z
      
      ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -507,16 +526,26 @@ PRO nibbler, Nparticles=Nparticles, shot=shot, electron=electron, temp=temp, psi
   ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
   ; Evolve
   
-  dt = DOUBLE(ctime)
+  dt = DOUBLE(ctime) * dtmul
   y = y0
   time = DOUBLE(0.)
-  FOR i=0, 2500 DO BEGIN
+  data = [[y0]]
+  tarr = [0.0]
+  nsteps = ROUND(runfor / dt)
+  PRINT, "TIMESTEP = ", dt, " seconds"
+  PRINT, "NUMBER OF STEPS: ", nsteps
+  FOR i=0, nsteps DO BEGIN
     dydt = differential(0., y)
     y = RK4(y, dydt, 0., dt, 'differential', /double)
     time = time + dt
 
     PLOTS, INTERPOLATE(r1d, y[0:(N-1)]), INTERPOLATE(z1d, y[N:(2*N-1)]), color=3, PSYM=3
     ;PRINT, y
+    IF i MOD 10 EQ 0 THEN BEGIN
+      data = [[data], [y]]
+      tarr = [tarr, time]
+      WRITEU, -1, 13, "Progress: "+STR(100.*FLOAT(i)/nsteps)+"%"
+    ENDIF
   ENDFOR
   
   IF KEYWORD_SET(output) THEN BEGIN
@@ -526,7 +555,7 @@ PRO nibbler, Nparticles=Nparticles, shot=shot, electron=electron, temp=temp, psi
       psin, rinds, zinds, $ ; Starting flux surface
       ri0, zi0, $ ; Starting location
       ke, mu, mass, charge, $ ; Particle quantities
-      y0, time, y, $  ; Starting and end positions, time elapsed
+      tarr, data, $  ; time and 
       file=output
   ENDIF
   

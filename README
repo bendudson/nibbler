@@ -1,0 +1,130 @@
+
+ooooo      ooo  o8o   .o8        .o8       oooo                     
+`888b.     `8'  `"'  "888       "888       `888                     
+ 8 `88b.    8  oooo   888oooo.   888oooo.   888   .ooooo.  oooo d8b 
+ 8   `88b.  8  `888   d88' `88b  d88' `88b  888  d88' `88b `888""8P 
+ 8     `88b.8   888   888   888  888   888  888  888ooo888  888     
+ 8       `888   888   888   888  888   888  888  888    .o  888     
+o8o        `8  o888o  `Y8bod8P'  `Y8bod8P' o888o `Y8bod8P' d888b    
+
+
+
+Outline
+=======
+
+A 3D drift-kinetic particle tracking code in cylindrical coordinates
+(R,Z,phi). Evolves the position and parallel velocity of particles
+in a tokamak with RMP coils. Takes into account curvature and Grad-B
+drifts, and the mirror force for trapping. Doesn't include electric
+fields or any sort of coupling between particles.
+
+Axisymmetric equilibrium field from EFIT, currently from a G-EQDSK
+file (as in A&G output).
+
+Calculates the field due to RMP coils from coil geometry settings.
+
+License
+=======
+
+Copyright 2010 B.D.Dudson (University of York)
+
+Nibbler is free software: you can redistribute it and/or modify
+it under the terms of the GNU Lesser General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+Nibbler is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU Lesser General Public License for more details.
+
+You should have received a copy of the GNU Lesser General Public License
+along with Nibbler. If not, see <http://www.gnu.org/licenses/>.
+
+A copy of the LGPL license is in COPYING.LESSER. Since this is based
+on (and refers to) the GPL, this is included in COPYING.
+
+Useage
+======
+
+To just see an example (trapped) orbit, just run
+
+IDL> nibbler
+
+and with RMP field on
+
+IDL> nibbler, /rmp
+
+
+Equilibrium / RMP settings
+--------------------------
+
+Since reading in and processing equilibria can take a while,
+this bit can be done once and then re-used
+
+/odd    Add this keyword to use odd RMP coil configuration
+        Default is even configuration
+
+Need to add options for reading shots from IDAM
+
+o Once generated, the data is saved in "equil.idl"
+
+o To re-use previously generated values, use "/equil" option
+
+Particle settings
+-----------------
+
+/rmp            Include RMP coils. Default is no
+
+current=current Current in the RMP coils in Amps. Defaults to 4 kA
+
+psin=psin       Normalised psi of starting point. All particles
+                start at outboard midplane. Default is 0.9
+
+Nparticles=Nparticles    Number of particles to simulate
+                         Spreads them out evenly in toroidal angle
+                         Default is only 1 particle
+
+/electron       Evolve electrons. Default is Deuterium ions
+
+temp = temp     Temperature in eV. This determines total kinetic energy
+                using E = 3/2 kT
+                Default is 200eV
+
+kpar=kpar       Specifies the particle pitch angle
+                Fraction of energy in parallel velocity Vpar^2 / V^2
+                Sign determines Vpar relative to B field.
+                Default is 0.3
+
+output=output   Set name of output file for saving results
+                Normally just stops at the end
+
+runfor=runfor   Simulation time to run for in seconds.
+                Default is 1ms
+
+dtmul=dtmul     Timestep in gyro-orbit time (~1e-7s). Default is 1
+
+
+Example
+-------
+
+nibbler, /equil, /rmp, output="kpar_p98_0.8.idl", n=100, psin=0.98, kpar=0.8
+
+Loads an existing equilibrium, includes RMP coils (default 4kA), 
+saves result to "kpar_p98_0.8.idl". Evolves 100 particles starting
+at the outboard midplane at normalised psi 0.98 with Vpar^2 = 0.8 V^2
+(a passing particle in this case)
+
+Issues
+======
+
+o Suspect there is a minus sign in the poloidal field: in MAST
+  poloidal field usually goes clockwise in R-Z plane. Here get opposite.
+
+
+o No handling for cases where particle leaves domain. Should detect
+  where hits targets
+
+o IDL code is REALLY slow. Could keep most of the initialisation code in IDL
+  to get equilibrium, calculate DCTs etc. but re-write the particle orbit
+  evolution in C/Fortran.
