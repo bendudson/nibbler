@@ -151,8 +151,8 @@ FUNCTION get3DGradients, var, ri, zi, pi, dr, dz, dphi
   n = N_ELEMENTS(r)
   ; Get the values at each point
   data = DBLARR(n)
-  FOR i=0, n-1 DO data[i] = var[((ri0+r[i]) > 0) < nr, $
-                                ((zi0+z[i]) > 0) < nz, $
+  FOR i=0, n-1 DO data[i] = var[((ri0+r[i]) > 0) < (nr-1), $
+                                ((zi0+z[i]) > 0) < (nz-1), $
                                 (((pi0+p[i]) MOD nphi) + nphi) MOD nphi]
   
 
