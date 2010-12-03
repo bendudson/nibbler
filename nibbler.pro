@@ -37,8 +37,17 @@ FUNCTION add, a, b
 END
 
 ;Calculate equilibrium B field
-FUNCTION getEqBfield, ri, zi
+FUNCTION getEqBfield, ri, zi, status=status
   COMMON equil_com, dctpsi, dctfpol, r1d, z1d, Ar, Az, Aphi, includermp 
+
+  status = 0
+  nr = N_ELEMENTS(r1d)
+  nz = N_ELEMENTS(z1d)
+  IF (ri LT 0) OR (ri GT nr-1) OR (zi LT 0) OR (zi GT nz-1) THEN BEGIN
+    ; Gone outside domain
+    status = 1
+    RETURN, 0
+  ENDIF
   
   r = INTERPOLATE(r1d, ri)
   drdi = INTERPOLATE(DERIV(r1d), ri)
@@ -198,21 +207,26 @@ FUNCTION differential, t, y
   drdi = INTERPOLATE(DERIV(r1d), ri)
   dzdi = INTERPOLATE(DERIV(z1d), zi)
   
+  evolve = REPLICATE(DOUBLE(1.), N)
   FOR i=0, N-1 DO BEGIN
-     eqB = getEqBfield(ri[i], zi[i])
+     eqB = getEqBfield(ri[i], zi[i], status=status)
+     IF status THEN BEGIN
+       evolve[i] = 0. ; Turn off evolution for this particle
+     ENDIF ELSE BEGIN
      
-     Br[i] = eqB.Br
-     Bz[i] = eqB.Bz
-     Bphi[i] = eqB.Bphi
-     
-     dBrdr[i] = eqB.dBrdr
-     dBrdz[i] = eqB.dBrdz
-     
-     dBzdr[i] = eqB.dBzdr
-     dBzdz[i] = eqB.dBzdz
-     
-     dBphidr[i] = eqB.dBphidr
-     dBphidz[i] = eqB.dBphidz
+       Br[i] = eqB.Br
+       Bz[i] = eqB.Bz
+       Bphi[i] = eqB.Bphi
+       
+       dBrdr[i] = eqB.dBrdr
+       dBrdz[i] = eqB.dBrdz
+       
+       dBzdr[i] = eqB.dBzdr
+       dBzdz[i] = eqB.dBzdz
+       
+       dBphidr[i] = eqB.dBphidr
+       dBphidz[i] = eqB.dBphidz
+     ENDELSE
   ENDFOR
   
   IF includermp THEN BEGIN
@@ -223,31 +237,32 @@ FUNCTION differential, t, y
     dphi = !DPI*2. / DOUBLE(nphi)
     
     FOR i=0, N-1 DO BEGIN
-       ; Calculate gradients at this location (Using SVD)
-       Arg = get3DGradients(Ar,   ri[i], zi[i], phi[i]/dphi, drdi[i], dzdi[i], dphi)
-       Azg = get3DGradients(Az,   ri[i], zi[i], phi[i]/dphi, drdi[i], dzdi[i], dphi)
-       Apg = get3DGradients(Aphi, ri[i], zi[i], phi[i]/dphi, drdi[i], dzdi[i], dphi)
+      ; Calculate gradients at this location (Using SVD)
+      IF evolve[i] THEN BEGIN
+        Arg = get3DGradients(Ar,   ri[i], zi[i], phi[i]/dphi, drdi[i], dzdi[i], dphi)
+        Azg = get3DGradients(Az,   ri[i], zi[i], phi[i]/dphi, drdi[i], dzdi[i], dphi)
+        Apg = get3DGradients(Aphi, ri[i], zi[i], phi[i]/dphi, drdi[i], dzdi[i], dphi)
        
-       ; Take curl of A
-       Br[i] = Br[i] + Azg.ddp/r[i] - Apg.ddz
-       Bz[i] = Bz[i] + ( Apg.f + r[i]*Apg.ddr - Arg.ddp ) / r[i]
-       Bphi[i] = Bphi[i] + Arg.ddz - Azg.ddr
-       
-       ; Gradients of B
-       
-       dBrdr[i] = dBrdr[i] + Azg.d2drdp/r[i] - Azg.ddp/(r[i]*r[i]) - Apg.d2drdz
-       dBrdz[i] = dBrdz[i] + Azg.d2dzdp/r[i] - Apg.d2dz2
-       dBrdphi[i] = (Azg.d2dp2/r[i] - Apg.d2dzdp)/r[i]
-       
-       dBzdr[i] = dBzdr[i] - ( Apg.f + r[i]*Apg.ddr - Arg.ddp ) / (r[i]*r[i]) + $
-                  ( Apg.ddr + Apg.ddr + r[i]*Apg.d2dr2 - Arg.d2drdp ) / r[i]
-       dBzdz[i] = dBzdz[i] + ( Apg.ddz + r[i]*Apg.d2drdz - Arg.d2dzdp ) / r[i]
-       dBzdphi[i] = (Apg.ddp + r[i]*Apg.d2drdp - Arg.d2dp2)/(r[i]*r[i])
-       
-       dBphidr[i] = dBphidr[i] + Arg.d2drdz - Azg.d2dr2
-       dBphidz[i] = dBphidz[i] + Arg.d2dz2 - Azg.d2drdz
-       dBphidphi[i] = (Arg.d2dzdp - Azg.d2drdp)/r[i]
-       
+        ; Take curl of A
+        Br[i] = Br[i] + Azg.ddp/r[i] - Apg.ddz
+        Bz[i] = Bz[i] + ( Apg.f + r[i]*Apg.ddr - Arg.ddp ) / r[i]
+        Bphi[i] = Bphi[i] + Arg.ddz - Azg.ddr
+        
+        ; Gradients of B
+        
+        dBrdr[i] = dBrdr[i] + Azg.d2drdp/r[i] - Azg.ddp/(r[i]*r[i]) - Apg.d2drdz
+        dBrdz[i] = dBrdz[i] + Azg.d2dzdp/r[i] - Apg.d2dz2
+        dBrdphi[i] = (Azg.d2dp2/r[i] - Apg.d2dzdp)/r[i]
+        
+        dBzdr[i] = dBzdr[i] - ( Apg.f + r[i]*Apg.ddr - Arg.ddp ) / (r[i]*r[i]) + $
+          ( Apg.ddr + Apg.ddr + r[i]*Apg.d2dr2 - Arg.d2drdp ) / r[i]
+        dBzdz[i] = dBzdz[i] + ( Apg.ddz + r[i]*Apg.d2drdz - Arg.d2dzdp ) / r[i]
+        dBzdphi[i] = (Apg.ddp + r[i]*Apg.d2drdp - Arg.d2dp2)/(r[i]*r[i])
+        
+        dBphidr[i] = dBphidr[i] + Arg.d2drdz - Azg.d2dr2
+        dBphidz[i] = dBphidz[i] + Arg.d2dz2 - Azg.d2drdz
+        dBphidphi[i] = (Arg.d2dzdp - Azg.d2drdp)/r[i]
+      ENDIF
     ENDFOR
   ENDIF
     
@@ -290,10 +305,9 @@ FUNCTION differential, t, y
   
   ; Calculate parallel acceleration (mirror force)
   dvpardt = -mu * dot( bvec, gradB ) / mass
-  
-  ;cursor, a, b, /down
 
-  return, [v.r / drdi, v.z / dzdi, v.phi / r, dvpardt]
+  return, [(v.r / drdi)*evolve, (v.z / dzdi)*evolve, $
+           (v.phi / r)*evolve, dvpardt*evolve]
 END
 
 PRO nibbler, Nparticles=Nparticles, shot=shot, electron=electron, $
