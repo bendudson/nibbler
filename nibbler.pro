@@ -535,7 +535,7 @@ PRO nibbler, Nparticles=Nparticles, shot=shot, electron=electron, $
 
   ; To get typical timescale, use cyclotron timescale
   
-  ctime = 2.*!PI * mass / (charge * Bmax)
+  ctime = ABS(2.*!PI * mass / (charge * Bmax))
 
   ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
   ; Evolve
