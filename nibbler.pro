@@ -548,7 +548,8 @@ PRO nibbler, Nparticles=Nparticles, shot=shot, electron=electron, $
   nsteps = ROUND(runfor / dt)
   PRINT, "TIMESTEP = ", dt, " seconds"
   PRINT, "NUMBER OF STEPS: ", nsteps
-  FOR i=0, nsteps DO BEGIN
+  i = 0L
+  REPEAT BEGIN
     dydt = differential(0., y)
     y = RK4(y, dydt, 0., dt, 'differential', /double)
     time = time + dt
@@ -560,7 +561,8 @@ PRO nibbler, Nparticles=Nparticles, shot=shot, electron=electron, $
       tarr = [tarr, time]
       WRITEU, -1, 13, "Progress: "+STR(100.*FLOAT(i)/nsteps)+"%"
     ENDIF
-  ENDFOR
+    i = i + 1L
+ ENDREP UNTIL i GE nsteps
   
   IF KEYWORD_SET(output) THEN BEGIN
     ; Dump the results to a file
