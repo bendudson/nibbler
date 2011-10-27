@@ -310,6 +310,21 @@ FUNCTION differential, t, y
            (v.phi / r)*evolve, dvpardt*evolve]
 END
 
+
+; Nparticles = Number of particles to simulate
+; shot       = MAST shot number (DOESN'T WORK YET)
+; /electron    Simulate electrons, default Deuterium ions
+; temp         Energy (temperature) of particles. All have same ke
+; psin       = Normalised psi of starting position
+; kpar       = Fraction of K.E. in parallel motion: Vpar^2 / V^2
+; output     = File name of the output (default is no output, just STOP)
+; equil      = Loads equilibrium file
+; /odd       = Change to odd configuration. Default is even
+; current    = Coil current in Amps. Default is 4e3
+; /rmp       = include RMP field. NEED THIS FOR RMP SIMULATIONS ****
+; runfor     = Length fo time to run (seconds)
+; dtmul      = Timestep factor (for convergence tests)
+;
 PRO nibbler, Nparticles=Nparticles, shot=shot, electron=electron, $
              temp=temp, psin=psin, $
              kpar=kpar, output=output, equil=equil, odd=odd, $
@@ -571,7 +586,7 @@ PRO nibbler, Nparticles=Nparticles, shot=shot, electron=electron, $
       psin, rinds, zinds, $ ; Starting flux surface
       ri0, zi0, $ ; Starting location
       ke, mu, mass, charge, $ ; Particle quantities
-      tarr, data, $  ; time and 
+      tarr, data, $  ; time and results
       file=output
   ENDIF
   
