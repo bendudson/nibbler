@@ -3,6 +3,9 @@
 ;
 ; Version history:
 ;
+; July 2013 : Ben Dudson <bd512@york.ac.uk>
+;     * Modified to follow field-lines
+;
 ; Nov 2010 :  Ben Dudson <bd512@york.ac.uk>
 ;     * Initial version
 ;
@@ -13,6 +16,33 @@
 ;
 ; All quantities are in SI units except temperature in eV
 ;
+;
+;
+;IDL> nibbler, gfile="g014220.00200"
+; 
+;    -> Loads 'g' file, calculates field from RMP coils
+;    -> Saves equilibrium in "equil.idl"
+;
+; RMP coils defined around line 417
+; By default, even configuration is created
+; Add ", /odd" to calculate odd configuration
+;
+;
+; Run WITHOUT RMP coils, follow field-line 10 times
+; around toroidally, starting at normalised psi = 0.9
+;
+;IDL> nibbler, n=1, /field, runfor=10, psin=0.9
+;
+; Output is in data.txt. See end of this file for the format
+;
+;
+; Run WITH RMP coils
+;
+;IDL> nibbler, n=1, /field, runfor=10, psin=0.9, /rmp, current=4e3
+; 
+; Switches on RMP coils, sets current to 4 kA-turns
+; 
+
 
 ; Cross-product of two vectors
 FUNCTION cross, a, b
@@ -172,7 +202,8 @@ FUNCTION addCart, a, b
 END
 
 ;; Calculate time derivatives
-FUNCTION differential, t, y
+FUNCTION differential, t, y, $
+                       Bmag=Bmag, gradB=gradB, bvec=bvec, kappa=kappa
   COMMON particle_com, N, mu, mass, charge
   COMMON equil_com, dctpsi, dctfpol, r1d, z1d, Ar, Az, Aphi, includermp
   
@@ -294,40 +325,47 @@ FUNCTION differential, t, y
   
   kappa = cross( curlb, bvec )  ; (b dot grad) b
 
-  ;; Calculate perpendicular drift velocity
-  invwcj = mass / (charge * B)  ; 1 / wcj
+  IF mass GT 0.0 THEN BEGIN
+    ;; Calculate perpendicular drift velocity
+    invwcj = mass / (charge * B)  ; 1 / wcj
+    
+    vd = mul( cross( bvec, add( mul(kappa, vpar^2), mul(gradB, mu) )), invwcj )
+    ;vd = {r:0.0, z:0.0, phi:0.0}
+    
+    ;; Add parallel velocity
+    v = add( vd, mul(bvec, vpar) )
   
-  vd = mul( cross( bvec, add( mul(kappa, vpar^2), mul(gradB, mu) )), invwcj )
-  ;vd = {r:0.0, z:0.0, phi:0.0}
+    ; Calculate parallel acceleration (mirror force)
+    dvpardt = -mu * dot( bvec, gradB ) / mass
+  ENDIF ELSE BEGIN
+    ; Following magnetic field
+    v = mul(bvec, vpar)
+    dvpardt = 0.0
+  ENDELSE
+  Bmag = B
   
-  ;; Add parallel velocity
-  v = add( vd, mul(bvec, vpar) )
-  
-  ; Calculate parallel acceleration (mirror force)
-  dvpardt = -mu * dot( bvec, gradB ) / mass
-
   return, [(v.r / drdi)*evolve, (v.z / dzdi)*evolve, $
            (v.phi / r)*evolve, dvpardt*evolve]
 END
 
 
 ; Nparticles = Number of particles to simulate
-; shot       = MAST shot number (DOESN'T WORK YET)
+; gfile      = Read g file for equilibrium
 ; /electron    Simulate electrons, default Deuterium ions
 ; temp         Energy (temperature) of particles. All have same ke
 ; psin       = Normalised psi of starting position
 ; kpar       = Fraction of K.E. in parallel motion: Vpar^2 / V^2
 ; output     = File name of the output (default is no output, just STOP)
-; equil      = Loads equilibrium file
 ; /odd       = Change to odd configuration. Default is even
 ; current    = Coil current in Amps. Default is 4e3
 ; /rmp       = include RMP field. NEED THIS FOR RMP SIMULATIONS ****
 ; runfor     = Length fo time to run (seconds)
 ; dtmul      = Timestep factor (for convergence tests)
 ;
-PRO nibbler, Nparticles=Nparticles, shot=shot, electron=electron, $
+PRO nibbler, Nparticles=Nparticles, $
+             field=field, electron=electron, $
              temp=temp, psin=psin, $
-             kpar=kpar, output=output, equil=equil, odd=odd, $
+             kpar=kpar, output=output, gfile=gfile, odd=odd, $
              current=current, rmp=rmp, $
              runfor=runfor, dtmul=dtmul
   COMMON particle_com, N, mu, mass, charge
@@ -346,40 +384,26 @@ PRO nibbler, Nparticles=Nparticles, shot=shot, electron=electron, $
   
   N = Nparticles
   
-  IF KEYWORD_SET(equil) THEN BEGIN
-     ; Load a previously calculated equilibrium
-     
-     RESTORE, 'equil.idl'
-     
-     s = SIZE(psi, /dim)
-     nr = s[0]
-     nz = s[1]
-  ENDIF ELSE BEGIN
-     IF KEYWORD_SET(shot) THEN BEGIN
-        ;; Fetch MAST equilibrium from IDAM
+  IF KEYWORD_SET(gfile) THEN BEGIN
+    ;; Read in neqdsk file to get Psi
+    ;gfile = "g014220.00200"
         
-        PRINT, "Sorry, code not written yet."
-        RETURN
-     ENDIF ELSE BEGIN
-        ;; Read in neqdsk file to get Psi
-        file = "g014220.00200"
-        
-        PRINT, "Reading G-EQDSK file"
-        grid = read_neqdsk(file)
-        
-        nr = grid.nx            ; Number of points in R
-        nz = grid.ny            ; Number of points in Z
-        psi = grid.psi          ; Poloidal flux on [nr, nz] mesh
-        
-        fpol1d = grid.fpol      ; f on uniform psi grid
-        
-        r2d = grid.r
-        z2d = grid.z
-        
-        r1d = REFORM(r2d[*,0])
-        z1d = REFORM(z2d[0,*])
-     ENDELSE
-     
+    PRINT, "Reading G-EQDSK file ", gfile
+    grid = read_neqdsk(gfile)
+    
+    nr = grid.nx            ; Number of points in R
+    nz = grid.ny            ; Number of points in Z
+    psi = grid.psi          ; Poloidal flux on [nr, nz] mesh
+    
+    fpol1d = grid.fpol      ; f on uniform psi grid
+    
+    r2d = grid.r
+    z2d = grid.z
+    
+    r1d = REFORM(r2d[*,0])
+    z1d = REFORM(z2d[0,*])
+    
+    
      ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
      ;; By this point, need
      ;; nr, nz
@@ -451,6 +475,14 @@ PRO nibbler, Nparticles=Nparticles, shot=shot, electron=electron, $
        aeq, $                  ; Analysis of equilibrium
        Ar, Az, Aphi, $         ; RMP field
        file="equil.idl"
+  ENDIF ELSE BEGIN
+    ; Load a previously calculated equilibrium
+    
+    RESTORE, 'equil.idl'
+     
+    s = SIZE(psi, /dim)
+    nr = s[0]
+    nz = s[1]
   ENDELSE
   
   ; Multiply the RMP coil field
@@ -490,25 +522,32 @@ PRO nibbler, Nparticles=Nparticles, shot=shot, electron=electron, $
   
   OPLOT, INTERPOLATE(r1d, rinds), INTERPOLATE(z1d, zinds), color=4, thick=2
   
-  ; Get starting position at outboard midplane
-  ri0 = MAX(rinds, pos)
-  zi0 = zinds[pos]
-  
-  ; Get B here. Should be minimum B
-  eqB = getEqBfield(ri0, zi0)
-  Bmin = SQRT(eqB.Br^2 + eqB.Bz^2 + eqB.Bphi^2)
-  
-
-  ; Get maximum B (to work out trapped/passing boundary)
-  ri1 = MIN(rinds, pos)
-  zi1 = zinds[pos]
-  eqB = getEqBfield(ri1, zi1)
-  Bmax = SQRT(eqB.Br^2 + eqB.Bz^2 + eqB.Bphi^2)
-  
-  trapbndry = 1 - Bmin / Bmax
-  
-  ;; Check if trapped
-  PRINT, "Particle trapped if |kpar| = vpar^2/v^2 < ", trapbndry
+  IF KEYWORD_SET(field) THEN BEGIN
+    ; Get starting position at inboard midplane
+    
+    ri0 = MIN(rinds, pos)
+    zi0 = zinds[pos]
+  ENDIF ELSE BEGIN
+    ; Get starting position at outboard midplane
+    ri0 = MAX(rinds, pos)
+    zi0 = zinds[pos]
+    
+    ; Get B here. Should be minimum B
+    eqB = getEqBfield(ri0, zi0)
+    Bmin = SQRT(eqB.Br^2 + eqB.Bz^2 + eqB.Bphi^2)
+    
+    
+    ; Get maximum B (to work out trapped/passing boundary)
+    ri1 = MIN(rinds, pos)
+    zi1 = zinds[pos]
+    eqB = getEqBfield(ri1, zi1)
+    Bmax = SQRT(eqB.Br^2 + eqB.Bz^2 + eqB.Bphi^2)
+    
+    trapbndry = 1 - Bmin / Bmax
+    
+    ; Check if trapped
+    PRINT, "Particle trapped if |kpar| = vpar^2/v^2 < ", trapbndry
+  ENDELSE
 
   ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
   ;; Generate initial spread of kinetic energies and magnetic moment
@@ -518,29 +557,59 @@ PRO nibbler, Nparticles=Nparticles, shot=shot, electron=electron, $
   ke = FLTARR(N)
   mu = FLTARR(N)
   
-  IF KEYWORD_SET(electron) THEN BEGIN
-     mass = 9.11e-31
-     charge = -1.602e-19
+  IF KEYWORD_SET(field) THEN BEGIN
+    ; magnetic field
+    
+    PRINT, "*** Following field-lines ***"
+
+    mass = -1.0  ; Indicates field-line
+    charge = 1.0
+    
+    vpar = FLTARR(N) + 1.0  ; 1 m/s
+    
+    rmaj = INTERPOLATE(r1d, ri0)
+    
+    ctime = 2.*!PI*rmaj / 100. ; ~100 points per toroidal turn
+    
+    runfor *= 2.*!PI*rmaj  ; Input is number of toroidal turns
   ENDIF ELSE BEGIN
-     ; Deuterium ion
-     mass = 2.*1.67e-27
-     charge = 1.602e-19
+    ; Particle
+    
+    IF KEYWORD_SET(electron) THEN BEGIN
+      ; electron
+      
+      PRINT, "*** Following electrons ***"
+      
+      mass = 9.11e-31
+      charge = -1.602e-19
+    ENDIF ELSE BEGIN
+      ; Deuterium ion
+      
+      PRINT, "*** Following ions ***"
+      
+      mass = 2.*1.67e-27
+      charge = 1.602e-19
+    ENDELSE
+    
+    ;; Choose distribution of energy
+    
+    ke = ke + 1.5*1.602e-19*temp  ; Energy in J
+    
+    ; Choose distribution of parallel velocity
+    kepar = ABS(kpar)*ke ; Kinetic energy in parallel direction
+    
+    vpar = FLTARR(N) + SIGN(kpar)*SQRT( 2.*kepar / mass )
+    
+    ; Get perpendicular K.E.
+    keperp = ke - kepar
+    
+    ; Magnetic moment is mu = keperp / B
+    mu = keperp / Bmin
+    
+    ; To get typical timescale, use cyclotron timescale
+  
+    ctime = ABS(2.*!PI * mass / (charge * Bmax))
   ENDELSE
-  
-  ;; Choose distribution of energy
-  
-  ke = ke + 1.5*1.602e-19*temp  ; Energy in J
-  
-  ;; Choose distribution of parallel velocity
-  kepar = ABS(kpar)*ke ; Kinetic energy in parallel direction
-  
-  vpar = FLTARR(N) + SIGN(kpar)*SQRT( 2.*kepar / mass )
-  
-  ;; Get perpendicular K.E.
-  keperp = ke - kepar
-  
-  ;; Magnetic moment is mu = keperp / B
-  mu = keperp / Bmin
   
   ; Create starting vector
   
@@ -548,47 +617,115 @@ PRO nibbler, Nparticles=Nparticles, shot=shot, electron=electron, $
         !DPI*2.*DINDGEN(N)/DOUBLE(N), $         ; Distribute around toroidally
         vpar]
 
-  ; To get typical timescale, use cyclotron timescale
-  
-  ctime = ABS(2.*!PI * mass / (charge * Bmax))
-
   ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
   ; Evolve
   
   dt = DOUBLE(ctime) * dtmul
   y = y0
+  
   time = DOUBLE(0.)
-  data = [[y0]]
-  tarr = [0.0]
   nsteps = ROUND(runfor / dt)
   PRINT, "TIMESTEP = ", dt, " seconds"
   PRINT, "NUMBER OF STEPS: ", nsteps
   i = 0L
   REPEAT BEGIN
-    dydt = differential(0., y)
+    dydt = differential(0., y, Bmag=B, gradB=gradB, bvec=bvec, kappa=kappa)
+    IF i EQ 0 THEN BEGIN
+      data = [[y0]]
+      tarr = [0.0]
+      
+      ; Equilibrium quantities
+      eqB = [B]
+      eqGradB = [gradB]
+      eqbvec = [bvec]
+      eqkappa = [kappa]
+      
+    ENDIF ELSE BEGIN
+      ;IF i MOD 10 EQ 0 THEN BEGIN
+      data = [[data], [y]]
+      tarr = [tarr, time]
+      
+      eqB = [[eqB], [B]]
+      eqGradB = [eqGradB, gradB]
+      eqbvec = [eqbvec, bvec]
+      eqkappa = [eqkappa, kappa]
+      ;ENDIF
+    ENDELSE
+    
     y = RK4(y, dydt, 0., dt, 'differential', /double)
     time = time + dt
 
-    PLOTS, INTERPOLATE(r1d, y[0:(N-1)]), INTERPOLATE(z1d, y[N:(2*N-1)]), color=3, PSYM=3
-    ;PRINT, y
-    IF i MOD 10 EQ 0 THEN BEGIN
-      data = [[data], [y]]
-      tarr = [tarr, time]
-      WRITEU, -1, 13, "Progress: "+STR(100.*FLOAT(i)/nsteps)+"%"
-    ENDIF
+    PLOTS, INTERPOLATE(r1d, y[0:(N-1)]), INTERPOLATE(z1d, y[N:(2*N-1)]), color=3, PSYM=4
+    
+    WRITEU, -1, 13, "Progress: "+STR(100.*FLOAT(i)/nsteps)+"%"
+    
     i = i + 1L
  ENDREP UNTIL i GE nsteps
-  
-  IF KEYWORD_SET(output) THEN BEGIN
-    ; Dump the results to a file
-    
-    SAVE, psi, fpol2d, r2d, z2d, psinorm, aeq, $ ; Equilibrium data
-      psin, rinds, zinds, $ ; Starting flux surface
-      ri0, zi0, $ ; Starting location
-      ke, mu, mass, charge, $ ; Particle quantities
-      tarr, data, $  ; time and results
-      file=output
-  ENDIF
-  
-  STOP
+ 
+ ; Extract data in more useful form
+ 
+ nout = N_ELEMENTS(tarr)  ; Number of outputs
+
+ rpos = INTERPOLATE(r1d, data[0:(n-1),*])  ; Radial position [m]
+ zpos = INTERPOLATE(z1d, data[n:(2*n-1),*]); Height [m]
+ phipos = data[2*n:(3*n-1),*]              ; Toroidal angle [radians]
+ 
+ Br   = FLTARR(n, nout)  ; Magnetic field components
+ Bz   = FLTARR(n, nout)
+ Bphi = FLTARR(n, nout)
+ 
+ kr = FLTARR(n, nout)    ; Curvature vector components
+ kz = FLTARR(n, nout) 
+ kphi = FLTARR(n, nout) 
+ 
+ FOR i=0,nout-1 DO BEGIN
+   Br[*,i]   = eqB[*,i]*eqbvec[i].r
+   Bz[*,i]   = eqB[*,i]*eqbvec[i].z
+   Bphi[*,i] = eqB[*,i]*eqbvec[i].phi
+   
+   kr[*,i] = eqkappa[i].r
+   kz[*,i] = eqkappa[i].z
+   kphi[*,i] = eqkappa[i].phi
+ ENDFOR
+
+ ; Position of the magnetic axis
+ rmagx = INTERPOLATE(r1d, aeq.opt_ri[aeq.primary_opt])
+ zmagx = INTERPOLATE(z1d, aeq.opt_zi[aeq.primary_opt])
+ 
+ ; Calculate poloidal geometric angle
+ thetageom = ATAN(zpos - zmagx, rpos - rmagx)
+ 
+ IF KEYWORD_SET(output) THEN BEGIN
+   ; Dump the results to a file
+   
+   SAVE, psi, fpol2d, r2d, z2d, psinorm, aeq, $ ; Equilibrium data
+     psin, rinds, zinds, $ ; Starting flux surface
+     ri0, zi0, $ ; Starting location
+     ke, mu, mass, charge, $ ; Particle quantities
+     tarr, data, $  ; time and results
+     file=output
+ ENDIF
+ 
+ IF NOT KEYWORD_SET(rmp) THEN current = 0.0
+
+ OPENW, f, "data.txt", /GET_LUN
+ PRINTF, f, n     ; Number of field-lines
+ PRINTF, f, nout  ; Number of points per field-line
+ PRINTF, f, psin    ; Normalised psi of starting location
+ PRINTF, f, current ; RMP coil current
+ FOR i=0, n-1 DO BEGIN
+   ; Loop over the field-line
+   
+   FOR j=0, nout-1 DO BEGIN
+     ; Order is: 
+     ;  position          R, Z, phi
+     ;  Magnetic field [T] Br, Bz, Bphi
+     ;  Curvature k = (b dot Grad) b : kr, kz, kphi
+     
+     PRINTF, f, rpos[i,j], zpos[i,j], phipos[i,j], thetageom[i,j], Br[i,j], Bz[i,j], Bphi[i,j], kr[i,j], kz[i,j], kphi[i,j]
+   ENDFOR
+ ENDFOR
+ CLOSE, f
+ 
+ STOP
 END
