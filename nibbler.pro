@@ -68,7 +68,7 @@ END
 
 ;Calculate equilibrium B field
 FUNCTION getEqBfield, ri, zi, status=status
-  COMMON equil_com, dctpsi, dctfpol, r1d, z1d, Ar, Az, Aphi, includermp 
+  COMMON equil_com, dctpsi, dctfpol, r1d, z1d, Ar, Az, Aphi, includermp
 
   status = 0
   nr = N_ELEMENTS(r1d)
@@ -104,7 +104,7 @@ FUNCTION getEqBfield, ri, zi, status=status
   dBzdr = ( (g[3]/(drdi^2)) - Bz ) / r
   dBzdz = g[5] / (drdi * dzdi) / r
   
-  RETURN, {Br:Br, Bz:Bz, Bphi:Bphi, $
+  RETURN, {psi:g[0], Br:Br, Bz:Bz, Bphi:Bphi, $
            dBrdr:dBrdr, dBrdz:dBrdz, $
            dBzdr:dBzdr, dBzdz:dBzdz, $
            dBphidr:dBphidr, dBphidz:dBphidz}
@@ -329,7 +329,7 @@ FUNCTION differential, t, y, $
     ;; Calculate perpendicular drift velocity
     invwcj = mass / (charge * B)  ; 1 / wcj
     
-    vd = mul( cross( bvec, add( mul(kappa, vpar^2), mul(gradB, mu) )), invwcj )
+    vd = mul( cross( bvec, add( mul(kappa, vpar^2), mul(gradB, mu/mass) )), invwcj )
     ;vd = {r:0.0, z:0.0, phi:0.0}
     
     ;; Add parallel velocity
